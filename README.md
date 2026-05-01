@@ -16,7 +16,7 @@
 ```bash
 git clone https://github.com/donrami/pi-go-bars.git
 cd pi-go-bars
-pi install path:.
+pi install .
 ```
 
 ## Quick Start
@@ -137,7 +137,7 @@ Opencode may have changed their dashboard HTML. Reinstall from source:
 ```bash
 cd /path/to/pi-go-bars
 git pull
-pi install path:.
+pi install .
 ```
 
 If the problem persists, [open an issue](https://github.com/donrami/pi-go-bars/issues).
