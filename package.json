@@ -1,0 +1,37 @@
+{
+  "name": "pi-go-bars",
+  "version": "0.1.0",
+  "description": "Opencode Go plan usage bars for pi — rolling, weekly, and monthly windows in the footer",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "extension",
+    "usage",
+    "opencode",
+    "opencode-go"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/donrami/pi-go-bars.git"
+  },
+  "homepage": "https://github.com/donrami/pi-go-bars#readme",
+  "bugs": {
+    "url": "https://github.com/donrami/pi-go-bars/issues"
+  },
+  "files": [
+    "extensions",
+    "README.md",
+    "LICENSE"
+  ],
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/pi-go-bars/index.ts"
+    ]
+  }
+}
