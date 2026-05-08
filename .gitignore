@@ -4,3 +4,4 @@ node_modules/
 .env
 tooling/
 AGENTS.md
+JOURNAL.md

@@ -6,7 +6,7 @@
  */
 
 import * as os from "node:os";
-import { Container, Spacer, Text } from "@mariozechner/pi-tui";
+import { Container, Spacer, Text } from "@earendil-works/pi-tui";
 
 export function renderSetupGuide(tui: any, theme: any, done: () => void) {
   const c = new Container();

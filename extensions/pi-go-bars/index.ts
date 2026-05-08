@@ -9,7 +9,7 @@
  * or ~/.pi/agent/pi-go-bars.json
  */
 
-import { type ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   Container,
   Text,
@@ -17,7 +17,7 @@ import {
   visibleWidth,
   type Component,
   type Focusable,
-} from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-tui";
 import {
   clampPercent,
   fetchWithCache,
@@ -284,7 +284,8 @@ export default function (pi: ExtensionAPI) {
           if (totalCacheWrite) statsParts.push(`W${formatTokens(totalCacheWrite)}`);
           let usingSubscription = false;
           try { usingSubscription = ctx.model ? ctx.modelRegistry.isUsingOAuth(ctx.model) : false; } catch { /* ignore */ }
-          if (totalCost || usingSubscription) {
+          // Opencode Go is flat-rate, not per-token — skip cost display
+          if (!isGoModel(ctx.model) && (totalCost || usingSubscription)) {
             statsParts.push(`$${totalCost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`);
           }
 
@@ -415,6 +416,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, _ctx) => {
     try { uiCtx = _ctx.ui; uiTheme = _ctx.ui.theme; } catch (err) { logError("lifecycle:session_start", err); return; }
     if (!isGoModel(_ctx.model)) return;
+    thinkingLevel = pi.getThinkingLevel?.() ?? "off";
     setupFooter(_ctx);
     await poll();
     tuiRef?.requestRender();
@@ -445,6 +447,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("thinking_level_select", async (_event, _ctx) => {
     thinkingLevel = _event.level;
+    tuiRef?.requestRender();
   });
 
   pi.on("session_shutdown", async (_event, _ctx) => {

@@ -1,6 +1,6 @@
 {
   "name": "pi-go-bars",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "description": "Opencode Go plan usage bars for pi — rolling, weekly, and monthly windows in the footer",
   "keywords": [
     "pi-package",
@@ -29,8 +29,8 @@
     "LICENSE"
   ],
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "*",
-    "@mariozechner/pi-tui": "*"
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
   },
   "pi": {
     "extensions": [
