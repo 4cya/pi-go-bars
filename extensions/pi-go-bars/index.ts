@@ -20,12 +20,16 @@ import {
 } from "@earendil-works/pi-tui";
 import {
   clampPercent,
+  colorForPercent,
+  fetchBillingWithCache,
   fetchWithCache,
   formatDuration,
+  formatUsd,
   logError,
   renderBar,
   renderPercent,
   type GoUsageData,
+  type ZenBillingData,
 } from "./core";
 import { renderSetupGuide } from "./setup";
 
@@ -48,11 +52,12 @@ function isGoModel(model: { provider: string } | undefined | null): boolean {
 
 interface UsageState {
   data: GoUsageData | null;
+  billing: ZenBillingData | null;
   loading: boolean;
 }
 
 export default function (pi: ExtensionAPI) {
-  const state: UsageState = { data: null, loading: true };
+  const state: UsageState = { data: null, billing: null, loading: true };
 
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let pollInFlight: Promise<void> | null = null;
@@ -61,7 +66,15 @@ export default function (pi: ExtensionAPI) {
   // ─── Polling ───────────────────────────────────────────────────────────────
 
   async function runPoll() {
-    state.data = await fetchWithCache();
+    // Fetch Go usage and Zen billing in parallel. They hit different pages
+    // (/go vs /billing) with the same credentials; a failure in one must not
+    // block the other, so swallowed errors are recorded inside each result.
+    const [goData, billing] = await Promise.all([
+      fetchWithCache(),
+      fetchBillingWithCache(),
+    ]);
+    state.data = goData;
+    state.billing = billing;
   }
 
   async function poll() {
@@ -236,6 +249,41 @@ export default function (pi: ExtensionAPI) {
     return parts.join("") + staleSuffix;
   }
 
+  // ─── Zen billing footer segment ─────────────────────────────────────────
+
+  /** Compact Zen PAYG segment: "Zen $20.00 $0.00/$50.00", degrading to
+   *  "Zen $20.00" then "$20.00" as maxWidth shrinks. Returns "" if nothing
+   *  fits or there is no/erroring billing data. */
+  function renderZenSegment(t: any, billing: ZenBillingData | null, maxWidth: number): string {
+    if (!billing || billing.error) return "";
+    const staleSuffix = billing.stale ? t.fg("warning", " stale") : "";
+    const staleW = visibleWidth(staleSuffix);
+
+    const bal = formatUsd(billing.balanceUsd);
+    const use = formatUsd(billing.monthlyUsageUsd);
+    const lim = formatUsd(billing.monthlyLimitUsd);
+
+    const usePct =
+      billing.monthlyLimitUsd > 0
+        ? clampPercent((billing.monthlyUsageUsd / billing.monthlyLimitUsd) * 100)
+        : 0;
+    // Mirror the Go bars: 0% renders dim, otherwise threshold-coloured.
+    const useColor = usePct > 0 ? colorForPercent(usePct) : "dim";
+
+    const label = t.fg("dim", "Zen ");
+    const balStr = t.fg("dim", bal);
+    const useStr = t.fg(useColor, use) + t.fg("dim", "/" + lim);
+
+    const full = label + balStr + " " + useStr;            // "Zen $20.00 $0.00/$50.00"
+    const mid = label + balStr;                             // "Zen $20.00"
+    const bare = balStr;                                    // "$20.00"
+
+    for (const cand of [full, mid, bare]) {
+      if (visibleWidth(cand) + staleW <= maxWidth) return cand + staleSuffix;
+    }
+    return "";
+  }
+
   // ─── Footer setup ──────────────────────────────────────────────────────────
 
   function setupFooter(ctx: any) {
@@ -313,22 +361,32 @@ export default function (pi: ExtensionAPI) {
             }
           }
 
-          // Bars
+          // Bars + Zen billing, centered together between stats and model.
           const statsVisible = visibleWidth(statsLeft);
           const modelVisible = visibleWidth(rightSide);
           const minGap = 2;
-          let barSpace = width - statsVisible - modelVisible - minGap * 2;
-          if (barSpace < 12) barSpace = 0;
+          const gapTotal = width - statsVisible - modelVisible - minGap * 2;
+          let barSpace = gapTotal >= 12 ? gapTotal : 0;
           const bars = barSpace > 0 ? renderFooterBars(theme, state.data, state.loading, barSpace) : "";
           const barsVisible = visibleWidth(stripAnsi(bars));
 
+          // Zen segment gets whatever gap remains after the Go bars.
+          let zenMax = gapTotal - (barsVisible > 0 ? barsVisible + 2 : 0);
+          if (zenMax < 6) zenMax = 0;
+          const zen = zenMax > 0 ? renderZenSegment(theme, state.billing, zenMax) : "";
+          const zenVisible = visibleWidth(stripAnsi(zen));
+
+          const sep = barsVisible > 0 && zenVisible > 0 ? "  " : "";
+          const center = bars + sep + zen;
+          const centerVisible = barsVisible + (sep ? 2 : 0) + zenVisible;
+
           let statsLine: string;
-          if (barsVisible > 0) {
-            const contentW = statsVisible + minGap + barsVisible + minGap + modelVisible;
+          if (centerVisible > 0) {
+            const contentW = statsVisible + minGap + centerVisible + minGap + modelVisible;
             if (contentW <= width) {
-              const gapLeft = Math.max(minGap, Math.floor((width - statsVisible - barsVisible - modelVisible) / 2));
-              const gapRight = width - statsVisible - barsVisible - modelVisible - gapLeft;
-              statsLine = statsLeft + " ".repeat(gapLeft) + bars + " ".repeat(gapRight) + rightSide;
+              const gapLeft = Math.max(minGap, Math.floor((width - statsVisible - centerVisible - modelVisible) / 2));
+              const gapRight = width - statsVisible - centerVisible - modelVisible - gapLeft;
+              statsLine = statsLeft + " ".repeat(gapLeft) + center + " ".repeat(gapRight) + rightSide;
             } else {
               const pad = " ".repeat(Math.max(minGap, width - statsVisible - modelVisible));
               statsLine = statsLeft + pad + rightSide;
@@ -465,7 +523,7 @@ export default function (pi: ExtensionAPI) {
       try {
         if (_ctx.ui) {
           await _ctx.ui.custom<void>((tui, theme, _kb, done) =>
-            buildUsageDetail(theme, state.data, done),
+            buildUsageDetail(theme, state.data, state.billing, done),
           );
         }
       } catch (err) { logError("command:gobars", err); }
@@ -490,7 +548,7 @@ export default function (pi: ExtensionAPI) {
 
 // ─── Detail UI Component ─────────────────────────────────────────────────────
 
-function buildUsageDetail(theme: any, data: GoUsageData | null, done: () => void): Container & Focusable {
+function buildUsageDetail(theme: any, data: GoUsageData | null, billing: ZenBillingData | null, done: () => void): Container & Focusable {
   const t = theme;
   const comp = new Container() as Container & Focusable;
   (comp as any)._focused = true;
@@ -527,6 +585,45 @@ function buildUsageDetail(theme: any, data: GoUsageData | null, done: () => void
     renderWin("Rolling", data.rolling);
     renderWin("Weekly", data.weekly);
     renderWin("Monthly", data.monthly);
+  }
+
+  // Zen pay-as-you-go billing section.
+  if (billing && !billing.error) {
+    lines.push("");
+    lines.push(t.bold("Zen Pay-As-You-Go"));
+    if (billing.stale && billing.warning) {
+      lines.push(t.fg("warning", "\u26A0 " + billing.warning));
+      lines.push("");
+    }
+    const balStr = formatUsd(billing.balanceUsd);
+    const useStr = formatUsd(billing.monthlyUsageUsd);
+    const limStr = formatUsd(billing.monthlyLimitUsd);
+    lines.push(t.fg("muted", "Balance".padEnd(8)) + "  " + t.fg("dim", balStr));
+    const usePct =
+      billing.monthlyLimitUsd > 0
+        ? clampPercent((billing.monthlyUsageUsd / billing.monthlyLimitUsd) * 100)
+        : 0;
+    lines.push(
+      t.fg("muted", "This mo.".padEnd(8)) +
+      "  " + renderPercent(t, usePct) +
+      t.fg("dim", `  ${useStr} / ${limStr}`),
+    );
+    lines.push("");
+    if (billing.autoReload) {
+      lines.push(
+        t.fg("muted", "Reload".padEnd(8)) + "  " +
+        t.fg("dim", `+$${billing.reloadAmountUsd.toFixed(2)} when < $${billing.reloadTriggerUsd.toFixed(2)}`),
+      );
+    }
+    if (billing.monthlyLimitUsd > 0) {
+      lines.push(
+        t.fg("muted", "Limit".padEnd(8)) + "  " +
+        t.fg("dim", `$${billing.monthlyLimitUsd.toFixed(2)} / month`),
+      );
+    }
+  } else if (billing && billing.error) {
+    lines.push("");
+    lines.push(t.fg("warning", "Zen billing: " + billing.error));
   }
 
   lines.push(t.fg("dim", "Press any key to close"));

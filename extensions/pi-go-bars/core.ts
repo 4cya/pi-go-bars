@@ -335,6 +335,204 @@ export async function fetchUsage(config: GoBarsConfig): Promise<GoUsageData> {
   }
 }
 
+// ─── Billing (Zen pay-as-you-go) ─────────────────────────────────────────────
+
+/**
+ * Zen pay-as-you-go billing data, scraped from the workspace /billing page.
+ *
+ * `balance` and `monthlyUsage` are stored server-side in 1e-8 USD
+ * ("microcents"): e.g. balance 1999960750 = $19.99960750, which the
+ * dashboard renders as $20.00. `monthlyLimit`, `reloadAmount`, and
+ * `reloadTrigger` are stored in whole USD dollars.
+ */
+export interface ZenBillingData {
+  balanceUsd: number;
+  monthlyUsageUsd: number;
+  monthlyLimitUsd: number;
+  autoReload: boolean;
+  reloadAmountUsd: number;
+  reloadTriggerUsd: number;
+  error?: string;
+  stale?: boolean;
+  warning?: string;
+  fetchedAt?: number;
+}
+
+const BILLING_URL = (workspaceId: string) =>
+  `https://opencode.ai/workspace/${workspaceId}/billing`;
+const BILLING_CACHE_FILE = path.join(
+  os.tmpdir(),
+  "pi",
+  "pi-go-bars-billing-cache.json",
+);
+
+/** Server-side value is in 1e-8 USD. */
+const MICROCENTS = 1e8;
+
+/** SolidJS minified booleans: !0 = true, !1 = false. Also tolerate raw forms. */
+function parseSolidBool(raw: string): boolean {
+  if (raw === "!0" || raw === "true") return true;
+  if (raw === "!1" || raw === "false" || raw === "null") return false;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n !== 0 : false;
+}
+
+const RE_BILLING_BALANCE = /balance:(-?\d+(?:\.\d+)?)/;
+const RE_BILLING_MONTHLY_USAGE = /monthlyUsage:(-?\d+(?:\.\d+)?)/;
+const RE_BILLING_MONTHLY_LIMIT = /monthlyLimit:(-?\d+(?:\.\d+)?)/;
+const RE_BILLING_RELOAD = /reload:(!0|!1|true|false|null)/;
+const RE_BILLING_RELOAD_AMOUNT = /reloadAmount:(-?\d+(?:\.\d+)?)/;
+const RE_BILLING_RELOAD_TRIGGER = /reloadTrigger:(-?\d+(?:\.\d+)?)/;
+
+function numOrNil(html: string, re: RegExp): number | null {
+  const m = re.exec(html);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Detect the billing dashboard SSR payload (guards against silent parser rot). */
+function looksLikeBilling(html: string): boolean {
+  return (
+    html.includes("monthlyLimit") ||
+    html.includes("monthlyUsage") ||
+    /balance:-?\d/.test(html)
+  );
+}
+
+export function parseBilling(html: string): ZenBillingData {
+  const balance = numOrNil(html, RE_BILLING_BALANCE);
+  const monthlyUsage = numOrNil(html, RE_BILLING_MONTHLY_USAGE);
+  const monthlyLimit = numOrNil(html, RE_BILLING_MONTHLY_LIMIT);
+  const reloadRaw = RE_BILLING_RELOAD.exec(html)?.[1] ?? null;
+  const reloadAmount = numOrNil(html, RE_BILLING_RELOAD_AMOUNT);
+  const reloadTrigger = numOrNil(html, RE_BILLING_RELOAD_TRIGGER);
+
+  const empty: ZenBillingData = {
+    balanceUsd: 0,
+    monthlyUsageUsd: 0,
+    monthlyLimitUsd: 0,
+    autoReload: false,
+    reloadAmountUsd: 0,
+    reloadTriggerUsd: 0,
+    fetchedAt: Date.now(),
+  };
+
+  if (balance === null && monthlyUsage === null && monthlyLimit === null) {
+    return looksLikeBilling(html)
+      ? { ...empty, error: "billing parser may be outdated — update pi-go-bars" }
+      : { ...empty, error: "no billing data on page" };
+  }
+
+  return {
+    balanceUsd: balance !== null ? balance / MICROCENTS : 0,
+    monthlyUsageUsd: monthlyUsage !== null ? monthlyUsage / MICROCENTS : 0,
+    monthlyLimitUsd: monthlyLimit ?? 0,
+    autoReload: reloadRaw !== null ? parseSolidBool(reloadRaw) : false,
+    reloadAmountUsd: reloadAmount ?? 0,
+    reloadTriggerUsd: reloadTrigger ?? 0,
+    fetchedAt: Date.now(),
+  };
+}
+
+export async function fetchBilling(config: GoBarsConfig): Promise<ZenBillingData> {
+  const url = BILLING_URL(config.workspaceId);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SCRAPE_TIMEOUT_MS);
+
+  try {
+    const resp = await fetch(url, {
+      headers: {
+        Cookie: `auth=${config.authCookie}`,
+        "User-Agent": USER_AGENT,
+      },
+      signal: controller.signal,
+    });
+
+    if (!resp.ok) {
+      throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+    }
+
+    const finalUrl = resp.url;
+    if (!finalUrl.includes(`/workspace/${config.workspaceId}/billing`)) {
+      throw new Error("Session expired or auth invalid — refresh your cookie");
+    }
+
+    const html = await resp.text();
+    return parseBilling(html);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+interface BillingCacheEntry {
+  data: ZenBillingData;
+  ts: number;
+}
+
+function readBillingCache(): BillingCacheEntry | null {
+  try {
+    const raw = fs.readFileSync(BILLING_CACHE_FILE, "utf-8");
+    const entry = JSON.parse(raw) as BillingCacheEntry;
+    if (entry?.data && typeof entry.ts === "number") return entry;
+  } catch (err) {
+    logError("billingCache:read", err);
+  }
+  return null;
+}
+
+function writeBillingCache(data: ZenBillingData): void {
+  try {
+    const dir = path.dirname(BILLING_CACHE_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const tmp = `${BILLING_CACHE_FILE}.tmp-${process.pid}`;
+    fs.writeFileSync(tmp, JSON.stringify({ data, ts: Date.now() }));
+    fs.chmodSync(tmp, 0o600);
+    fs.renameSync(tmp, BILLING_CACHE_FILE);
+  } catch (err) {
+    logError("billingCache:write", err);
+  }
+}
+
+/**
+ * Orchestrated billing fetch: config → validation → cache → fetch → persist.
+ * Returns null only when there is no config at all (so the Go-only path is
+ * unaffected); fetch/parse errors come back as a ZenBillingData with `.error`.
+ */
+export async function fetchBillingWithCache(): Promise<ZenBillingData | null> {
+  const cfg = loadConfig();
+  if (!cfg) return null;
+
+  const validationError = validateConfig(cfg);
+  if (validationError) return null;
+
+  const cached = readBillingCache();
+  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
+    return cached.data;
+  }
+
+  try {
+    const data = await fetchBilling(cfg);
+    writeBillingCache(data);
+    return data;
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const stale = readBillingCache();
+    if (stale) {
+      return { ...stale.data, stale: true, warning: `stale billing (${msg})` };
+    }
+    return {
+      balanceUsd: 0,
+      monthlyUsageUsd: 0,
+      monthlyLimitUsd: 0,
+      autoReload: false,
+      reloadAmountUsd: 0,
+      reloadTriggerUsd: 0,
+      error: msg,
+    };
+  }
+}
+
 // ─── Validation ──────────────────────────────────────────────────────────────
 
 function validateConfig(config: GoBarsConfig): string | null {
@@ -430,4 +628,10 @@ export function renderBar(theme: any, value: number, width = 8): string {
 export function renderPercent(theme: any, value: number): string {
   const v = clampPercent(value);
   return theme.fg(colorForPercent(v), `${v}%`);
+}
+
+/** Format a USD amount with 2 decimal places, e.g. formatUsd(19.9996) === "$20.00". */
+export function formatUsd(value: number): string {
+  if (!Number.isFinite(value)) return "$0.00";
+  return `$${value.toFixed(2)}`;
 }
