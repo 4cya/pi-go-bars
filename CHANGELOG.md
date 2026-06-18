@@ -1,4 +1,13 @@
 # Changelog
+## [0.3.0] — 2026-06-18
+
+### Added
+- **Zen pay-as-you-go billing (opt-in)**: New `Zen $20.00 $0.00/$50.00` segment appears beside the Go usage bars in the footer, with a full balance / monthly-spend / reload breakdown in `/gobars`. Enable with `OPENCODE_GO_SHOW_ZEN=1` or `"showZen": true` in `~/.pi/agent/pi-go-bars.json`. Reuses the existing workspace ID and auth cookie — no new credentials. The `/billing` scrape is anchored on `customerID:"cus_..."` with a depth-counted brace scan, so a future component on that page exposing its own `balance:` field cannot be silently matched. Default behaviour for existing Go-only users is unchanged.
+- **Test suite**: `npm test` runs 12 unit tests covering `parseBilling`, `parseDashboard`, `formatUsd`, and the `showZen` opt-in. Uses `node:test` with Node's built-in type stripping — no new dependencies. Sanitized fixtures under `extensions/pi-go-bars/testdata/`.
+
+### Changed
+- **Generic cache helpers**: `readCacheFile<T>` / `writeCacheFile<T>` extracted so the Go-usage and Zen-billing caches share an atomic write path (tmp file + `chmod 600` + rename).
+
 
 ## [0.2.1] — 2026-05-09
 
