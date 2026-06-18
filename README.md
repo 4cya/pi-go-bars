@@ -2,7 +2,7 @@
 
 <p align="center">
   <a href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
-  <a href="package.json"><img alt="Node: >=18" src="https://img.shields.io/badge/node-%3E%3D18-brightgreen"></a>
+  <a href="package.json"><img alt="Node: >=22.6" src="https://img.shields.io/badge/node-%3E%3D22.6-brightgreen"></a>
   <a href="https://github.com/donrami/pi-go-bars"><img alt="GitHub last commit" src="https://img.shields.io/github/last-commit/donrami/pi-go-bars"></a>
   <a href="https://pi.dev"><img alt="pi extension" src="https://img.shields.io/badge/pi-extension-purple"></a>
 </p>
