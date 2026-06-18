@@ -196,33 +196,49 @@ export function writeConfig(config: GoBarsConfig, configFile = DEFAULT_CONFIG_FI
 const CACHE_TTL_MS = 90 * 1000;
 const CACHE_FILE = path.join(os.tmpdir(), "pi", "pi-go-bars-cache.json");
 
-interface CacheEntry {
-  data: GoUsageData;
+interface CacheEntry<T> {
+  data: T;
   ts: number;
 }
 
-function readCache(): CacheEntry | null {
+/**
+ * Generic JSON cache reader. `context` tags log entries so per-callers stay
+ * distinguishable ("cache:read" vs "billingCache:read").
+ */
+function readCacheFile<T>(file: string, context: string): CacheEntry<T> | null {
   try {
-    const raw = fs.readFileSync(CACHE_FILE, "utf-8");
-    const entry = JSON.parse(raw) as CacheEntry;
+    const raw = fs.readFileSync(file, "utf-8");
+    const entry = JSON.parse(raw) as CacheEntry<T>;
     if (entry?.data && typeof entry.ts === "number") return entry;
   } catch (err) {
-    logError("cache:read", err);
+    logError(`${context}:read`, err);
   }
   return null;
 }
 
-function writeCache(data: GoUsageData): void {
+/**
+ * Atomic JSON cache write: tmp file + chmod 600 + rename, so a crash never
+ * leaves a half-written cache. Mirrors the pattern used for config files.
+ */
+function writeCacheFile<T>(file: string, data: T, context: string): void {
   try {
-    const dir = path.dirname(CACHE_FILE);
+    const dir = path.dirname(file);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const tmp = `${CACHE_FILE}.tmp-${process.pid}`;
+    const tmp = `${file}.tmp-${process.pid}`;
     fs.writeFileSync(tmp, JSON.stringify({ data, ts: Date.now() }));
     fs.chmodSync(tmp, 0o600);
-    fs.renameSync(tmp, CACHE_FILE);
+    fs.renameSync(tmp, file);
   } catch (err) {
-    logError("cache:write", err);
+    logError(`${context}:write`, err);
   }
+}
+
+const CACHE_CONTEXT = "cache";
+function readCache(): CacheEntry<GoUsageData> | null {
+  return readCacheFile<GoUsageData>(CACHE_FILE, CACHE_CONTEXT);
+}
+function writeCache(data: GoUsageData): void {
+  writeCacheFile(CACHE_FILE, data, CACHE_CONTEXT);
 }
 
 // ─── Fetch ───────────────────────────────────────────────────────────────────
@@ -400,13 +416,38 @@ function looksLikeBilling(html: string): boolean {
   );
 }
 
+/**
+ * Extract the billing settings object from the SSR hydration output.
+ *
+ * The object is a SolidJS assignment whose body starts with
+ * `customerID:"cus_..."` and runs to its matching closing brace. Anchoring
+ * on `customerID:"cus_..."` binds all field regexes to THIS object, so a
+ * future component rendered on /billing that also exposes a `balance:` or
+ * `monthlyLimit:` field can't be silently matched instead.
+ *
+ * The object body contains no nested `{` / `}` (date values use
+ * `new Date("...")`, which is parenthesised, not braced), so a flat depth
+ * scan to the matching `}` is safe.
+ */
+function extractBillingObject(html: string): string | null {
+  const start = html.indexOf('customerID:"cus_');
+  if (start === -1) return null;
+  const braceStart = html.lastIndexOf("{", start);
+  if (braceStart === -1) return null;
+  let depth = 0;
+  for (let i = braceStart; i < html.length; i++) {
+    const c = html[i];
+    if (c === "{") depth++;
+    else if (c === "}") {
+      depth--;
+      if (depth === 0) return html.slice(braceStart, i + 1);
+    }
+  }
+  return null;
+}
+
 export function parseBilling(html: string): ZenBillingData {
-  const balance = numOrNil(html, RE_BILLING_BALANCE);
-  const monthlyUsage = numOrNil(html, RE_BILLING_MONTHLY_USAGE);
-  const monthlyLimit = numOrNil(html, RE_BILLING_MONTHLY_LIMIT);
-  const reloadRaw = RE_BILLING_RELOAD.exec(html)?.[1] ?? null;
-  const reloadAmount = numOrNil(html, RE_BILLING_RELOAD_AMOUNT);
-  const reloadTrigger = numOrNil(html, RE_BILLING_RELOAD_TRIGGER);
+  const obj = extractBillingObject(html);
 
   const empty: ZenBillingData = {
     balanceUsd: 0,
@@ -418,15 +459,32 @@ export function parseBilling(html: string): ZenBillingData {
     fetchedAt: Date.now(),
   };
 
-  if (balance === null && monthlyUsage === null && monthlyLimit === null) {
+  // No billing object at all: either a login/redirect page, or the SSR shape
+  // changed. `looksLikeBilling` disambiguates the two for the error message.
+  if (!obj) {
     return looksLikeBilling(html)
       ? { ...empty, error: "billing parser may be outdated — update pi-go-bars" }
       : { ...empty, error: "no billing data on page" };
   }
 
+  const balance = numOrNil(obj, RE_BILLING_BALANCE);
+  const monthlyUsage = numOrNil(obj, RE_BILLING_MONTHLY_USAGE);
+  const monthlyLimit = numOrNil(obj, RE_BILLING_MONTHLY_LIMIT);
+  const reloadRaw = RE_BILLING_RELOAD.exec(obj)?.[1] ?? null;
+  const reloadAmount = numOrNil(obj, RE_BILLING_RELOAD_AMOUNT);
+  const reloadTrigger = numOrNil(obj, RE_BILLING_RELOAD_TRIGGER);
+
+  // Field order may vary; if we found the object but none of the key fields,
+  // treat it as parser rot rather than returning a misleading $0.00.
+  if (balance === null && monthlyUsage === null && monthlyLimit === null) {
+    return { ...empty, error: "billing parser may be outdated — update pi-go-bars" };
+  }
+
   return {
+    // balance & monthlyUsage are stored in 1e-8 USD (microcents)
     balanceUsd: balance !== null ? balance / MICROCENTS : 0,
     monthlyUsageUsd: monthlyUsage !== null ? monthlyUsage / MICROCENTS : 0,
+    // monthlyLimit / reloadAmount / reloadTrigger are already in whole USD
     monthlyLimitUsd: monthlyLimit ?? 0,
     autoReload: reloadRaw !== null ? parseSolidBool(reloadRaw) : false,
     reloadAmountUsd: reloadAmount ?? 0,
@@ -470,28 +528,12 @@ interface BillingCacheEntry {
   ts: number;
 }
 
+const BILLING_CACHE_CONTEXT = "billingCache";
 function readBillingCache(): BillingCacheEntry | null {
-  try {
-    const raw = fs.readFileSync(BILLING_CACHE_FILE, "utf-8");
-    const entry = JSON.parse(raw) as BillingCacheEntry;
-    if (entry?.data && typeof entry.ts === "number") return entry;
-  } catch (err) {
-    logError("billingCache:read", err);
-  }
-  return null;
+  return readCacheFile<ZenBillingData>(BILLING_CACHE_FILE, BILLING_CACHE_CONTEXT);
 }
-
 function writeBillingCache(data: ZenBillingData): void {
-  try {
-    const dir = path.dirname(BILLING_CACHE_FILE);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const tmp = `${BILLING_CACHE_FILE}.tmp-${process.pid}`;
-    fs.writeFileSync(tmp, JSON.stringify({ data, ts: Date.now() }));
-    fs.chmodSync(tmp, 0o600);
-    fs.renameSync(tmp, BILLING_CACHE_FILE);
-  } catch (err) {
-    logError("billingCache:write", err);
-  }
+  writeCacheFile(BILLING_CACHE_FILE, data, BILLING_CACHE_CONTEXT);
 }
 
 /**

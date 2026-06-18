@@ -371,8 +371,12 @@ export default function (pi: ExtensionAPI) {
           const barsVisible = visibleWidth(stripAnsi(bars));
 
           // Zen segment gets whatever gap remains after the Go bars.
+          // ZEN_MIN_WIDTH is the shortest renderable form, "$0.00" (5 chars)
+          // plus 1 char of breathing room; below this it's better to show
+          // nothing than a truncated/cramped balance.
+          const ZEN_MIN_WIDTH = 6;
           let zenMax = gapTotal - (barsVisible > 0 ? barsVisible + 2 : 0);
-          if (zenMax < 6) zenMax = 0;
+          if (zenMax < ZEN_MIN_WIDTH) zenMax = 0;
           const zen = zenMax > 0 ? renderZenSegment(theme, state.billing, zenMax) : "";
           const zenVisible = visibleWidth(stripAnsi(zen));
 
@@ -589,6 +593,9 @@ function buildUsageDetail(theme: any, data: GoUsageData | null, billing: ZenBill
 
   // Zen pay-as-you-go billing section.
   if (billing && !billing.error) {
+    lines.push("");
+    // Visual rule separating the Go usage bars from the Zen billing block.
+    lines.push(t.fg("dim", "\u2500".repeat(40)));
     lines.push("");
     lines.push(t.bold("Zen Pay-As-You-Go"));
     if (billing.stale && billing.warning) {
