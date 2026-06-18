@@ -1,6 +1,6 @@
 {
   "name": "pi-go-bars",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Opencode Go plan usage bars for pi — rolling, weekly, and monthly windows in the footer",
   "keywords": [
     "pi-package",

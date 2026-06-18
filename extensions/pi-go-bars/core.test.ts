@@ -12,7 +12,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as url from "node:url";
 
-import { parseBilling, parseDashboard, formatUsd } from "./core.ts";
+import { parseBilling, parseDashboard, formatUsd, loadConfig } from "./core.ts";
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const fixture = (name: string) =>
@@ -125,4 +125,60 @@ test("formatUsd: rounds to 2 decimals, prefixes $", () => {
   assert.equal(formatUsd(1234.5), "$1234.50");
   assert.equal(formatUsd(NaN), "$0.00");
   assert.equal(formatUsd(Infinity), "$0.00");
+});
+
+// ─── showZen opt-in (default off) ─────────────────────────────────────────────
+
+test("loadConfig: showZen defaults to false / undefined when not set", () => {
+  // No creds in env and no config file in the test cwd → null config.
+  // (Guarded with a temp dir so a real ~/.pi/agent/pi-go-bars.json on the
+  // dev machine doesn't leak into the test result.)
+  const tmp = path.join(__dirname, "testdata", "empty-config.json");
+  const saved = { ...process.env };
+  delete process.env.OPENCODE_GO_WORKSPACE_ID;
+  delete process.env.OPENCODE_GO_AUTH_COOKIE;
+  delete process.env.OPENCODE_GO_SHOW_ZEN;
+  try {
+    const cfg = loadConfig(tmp);
+    assert.equal(cfg, null);
+  } finally {
+    process.env = saved;
+  }
+});
+
+test("loadConfig: env OPENCODE_GO_SHOW_ZEN=1 opts in to Zen billing", () => {
+  const saved = { ...process.env };
+  process.env.OPENCODE_GO_WORKSPACE_ID = "wrk_TEST";
+  process.env.OPENCODE_GO_AUTH_COOKIE = "Fe26.2**test";
+  try {
+    process.env.OPENCODE_GO_SHOW_ZEN = "1";
+    assert.equal(loadConfig()?.showZen, true);
+    process.env.OPENCODE_GO_SHOW_ZEN = "false";
+    assert.equal(loadConfig()?.showZen, false);
+    process.env.OPENCODE_GO_SHOW_ZEN = "yes";
+    assert.equal(loadConfig()?.showZen, true);
+    delete process.env.OPENCODE_GO_SHOW_ZEN;
+    assert.equal(loadConfig()?.showZen, false);
+  } finally {
+    process.env = saved;
+  }
+});
+
+test("loadConfig: JSON showZen:true opts in", () => {
+  const tmp = path.join(__dirname, "testdata", "zen-enabled.json");
+  fs.writeFileSync(tmp, JSON.stringify({
+    workspaceId: "wrk_TEST",
+    authCookie: "Fe26.2**test",
+    showZen: true,
+  }));
+  const saved = { ...process.env };
+  delete process.env.OPENCODE_GO_WORKSPACE_ID;
+  delete process.env.OPENCODE_GO_AUTH_COOKIE;
+  delete process.env.OPENCODE_GO_SHOW_ZEN;
+  try {
+    assert.equal(loadConfig(tmp)?.showZen, true);
+  } finally {
+    process.env = saved;
+    fs.rmSync(tmp, { force: true });
+  }
 });

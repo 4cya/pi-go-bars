@@ -30,6 +30,7 @@ import {
   renderPercent,
   type GoUsageData,
   type ZenBillingData,
+  loadConfig,
 } from "./core";
 import { renderSetupGuide } from "./setup";
 
@@ -63,15 +64,22 @@ export default function (pi: ExtensionAPI) {
   let pollInFlight: Promise<void> | null = null;
   let pollQueued = false;
 
+  // Whether the Zen /billing scrape is opted in. Resolved once per lifecycle
+  // hook from config so runPoll doesn't re-load config every tick. Default
+  // false keeps the billing fetch (and its extra network request) entirely
+  // off for Go-only installs.
+  let zenEnabled = false;
+
   // ─── Polling ───────────────────────────────────────────────────────────────
 
   async function runPoll() {
     // Fetch Go usage and Zen billing in parallel. They hit different pages
     // (/go vs /billing) with the same credentials; a failure in one must not
     // block the other, so swallowed errors are recorded inside each result.
+    // The Zen fetch is skipped entirely when not opted in (zenEnabled false).
     const [goData, billing] = await Promise.all([
       fetchWithCache(),
-      fetchBillingWithCache(),
+      zenEnabled ? fetchBillingWithCache() : Promise.resolve(null),
     ]);
     state.data = goData;
     state.billing = billing;
@@ -479,6 +487,7 @@ export default function (pi: ExtensionAPI) {
     try { uiCtx = _ctx.ui; uiTheme = _ctx.ui.theme; } catch (err) { logError("lifecycle:session_start", err); return; }
     if (!isGoModel(_ctx.model)) return;
     thinkingLevel = pi.getThinkingLevel?.() ?? "off";
+    zenEnabled = loadConfig()?.showZen ?? false;
     setupFooter(_ctx);
     await poll();
     tuiRef?.requestRender();
@@ -499,6 +508,7 @@ export default function (pi: ExtensionAPI) {
       return;
     }
     if (!footerActive) {
+      zenEnabled = loadConfig()?.showZen ?? false;
       setupFooter(_ctx);
       if (!state.data || state.loading) await poll();
       tuiRef?.requestRender();

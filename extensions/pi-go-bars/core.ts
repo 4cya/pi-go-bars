@@ -63,10 +63,23 @@ export const DEFAULT_CONFIG_FILE = path.join(
 export interface GoBarsConfig {
   workspaceId: string;
   authCookie: string;
+  /**
+   * Opt-in: also scrape the workspace /billing page and render the Zen
+   * pay-as-you-go balance + monthly spend segment. Default false so an
+   * upgrade never changes behaviour for existing Go-only users.
+   */
+  showZen?: boolean;
 }
 
 function isString(val: unknown): val is string {
   return typeof val === "string";
+}
+
+/**Truthy check for env-style flags: "1"/"true"/"yes"/"on" (case-insensitive).*/
+function isTruthyFlag(value: string | undefined): boolean {
+  if (!value) return false;
+  const v = value.trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
 }
 
 /**
@@ -83,6 +96,7 @@ export function loadEnvFile(filePath: string): GoBarsConfig | null {
     const lines = raw.split(/\r?\n/);
     let workspaceId = "";
     let authCookie = "";
+    let showZen = false;
 
     for (const line of lines) {
       const trimmed = line.trim();
@@ -106,11 +120,13 @@ export function loadEnvFile(filePath: string): GoBarsConfig | null {
         workspaceId = value;
       } else if (key === "OPENCODE_GO_AUTH_COOKIE" && value) {
         authCookie = value;
+      } else if (key === "OPENCODE_GO_SHOW_ZEN") {
+        showZen = isTruthyFlag(value);
       }
     }
 
     if (workspaceId && authCookie) {
-      return { workspaceId, authCookie } as GoBarsConfig;
+      return { workspaceId, authCookie, showZen } as GoBarsConfig;
     }
   } catch (err) {
     logError("config:loadEnvFile", err);
@@ -127,7 +143,11 @@ export function loadConfig(configFile = DEFAULT_CONFIG_FILE): GoBarsConfig | nul
   const envWs = process.env.OPENCODE_GO_WORKSPACE_ID?.trim();
   const envCookie = process.env.OPENCODE_GO_AUTH_COOKIE?.trim();
   if (envWs && envCookie) {
-    return { workspaceId: envWs, authCookie: envCookie } as GoBarsConfig;
+    return {
+      workspaceId: envWs,
+      authCookie: envCookie,
+      showZen: isTruthyFlag(process.env.OPENCODE_GO_SHOW_ZEN),
+    } as GoBarsConfig;
   }
 
   // 1.5) .env file in current working directory (convenience for dev)
@@ -140,7 +160,10 @@ export function loadConfig(configFile = DEFAULT_CONFIG_FILE): GoBarsConfig | nul
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const ws = isString(parsed.workspaceId) ? parsed.workspaceId.trim() : "";
     const cookie = isString(parsed.authCookie) ? parsed.authCookie.trim() : "";
-    if (ws && cookie) return { workspaceId: ws, authCookie: cookie } as GoBarsConfig;
+    if (ws && cookie) {
+      const showZen = parsed.showZen === true;
+      return { workspaceId: ws, authCookie: cookie, showZen } as GoBarsConfig;
+    }
   } catch (err) {
     logError("config:loadJson", err);
   }
@@ -538,12 +561,15 @@ function writeBillingCache(data: ZenBillingData): void {
 
 /**
  * Orchestrated billing fetch: config → validation → cache → fetch → persist.
- * Returns null only when there is no config at all (so the Go-only path is
- * unaffected); fetch/parse errors come back as a ZenBillingData with `.error`.
+ * Returns null when there is no config, when config is invalid, OR when Zen
+ * billing display is not opted in (cfg.showZen) — so the default Go-only
+ * install never makes a /billing request and never renders the segment.
+ * Fetch/parse errors come back as a ZenBillingData with `.error`.
  */
 export async function fetchBillingWithCache(): Promise<ZenBillingData | null> {
   const cfg = loadConfig();
   if (!cfg) return null;
+  if (!cfg.showZen) return null;
 
   const validationError = validateConfig(cfg);
   if (validationError) return null;

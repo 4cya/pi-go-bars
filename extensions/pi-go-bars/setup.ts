@@ -67,4 +67,14 @@ function renderGuidePage(c: Container, t: any) {
   c.addChild(new Text(t.fg("dim", "  EOF"), 0, 0));
   c.addChild(new Text(t.fg("dim", "  chmod 600 ~/.pi/agent/pi-go-bars.json"), 0, 0));
   c.addChild(new Text(t.fg("dim", "  Then restart pi."), 0, 0));
+  c.addChild(new Spacer(1));
+
+  // Optional Zen billing section
+  c.addChild(new Text(t.fg("accent", "Optional: Zen Pay-As-You-Go Billing"), 0, 0));
+  c.addChild(new Text(t.fg("dim", "  Off by default. When enabled, the footer also shows"), 0, 0));
+  c.addChild(new Text(t.fg("dim", "  your Zen balance and monthly spend, e.g."), 0, 0));
+  c.addChild(new Text(t.fg("muted", "    Go R ████42%████ ...  Zen $20.00 $0.00/$50.00"), 0, 0));
+  c.addChild(new Text(t.fg("dim", "  Same credentials — no new secrets. Enable via:"), 0, 0));
+  c.addChild(new Text(t.fg("muted", "    export ") + t.fg("success", "OPENCODE_GO_SHOW_ZEN=1"), 0, 0));
+  c.addChild(new Text(t.fg("dim", "  or add ") + t.fg("success", "\"showZen\": true") + t.fg("dim", " to the JSON config above."), 0, 0));
 }
