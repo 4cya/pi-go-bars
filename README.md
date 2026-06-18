@@ -215,6 +215,9 @@ Parser and config unit tests use Node's built-in test runner (no extra dependenc
 npm test
 ```
 
+Requires Node ≥22.6 — the test script uses `--experimental-strip-types`, which is only available on Node 22.6 or later. The extension runtime (the TUI widget itself) works on Node ≥18 as the `engines` badge above indicates.
+
+
 Covers `parseBilling` (real SSR fixture, a decoy-`balance` false-match guard, login redirect, parser-rot detection, nested-object depth), `parseDashboard` regression guards, `formatUsd`, and the `showZen` opt-in config flag. Fixtures under `extensions/pi-go-bars/testdata/` are sanitised (no real Stripe IDs).
 
 ## License
