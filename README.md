@@ -9,6 +9,8 @@
 
 [pi](https://pi.dev) extension that shows Opencode Go plan usage as a widget line between the editor and the footer. Rolling, weekly, and monthly windows are rendered as inline percentage bars using the terminal's muted theme colour.
 
+Optionally, it can also show your **Zen pay-as-you-go** balance and monthly spend alongside the Go bars — off by default, see [Zen Billing](#zen-pay-as-you-go-billing-optional).
+
 ![Go usage bars widget screenshot](screenshot.png)
 
 ## Install
@@ -28,6 +30,8 @@ Credentials stay in memory only.
 ```bash
 export OPENCODE_GO_WORKSPACE_ID="wrk_YOUR_WORKSPACE_ID"
 export OPENCODE_GO_AUTH_COOKIE="Fe26.2**YOUR_AUTH_COOKIE"
+# Optional: also show Zen pay-as-you-go billing (off by default)
+export OPENCODE_GO_SHOW_ZEN=1
 ```
 
 Add to your shell profile (`~/.bashrc`, `~/.zshrc`), run `source ~/.bashrc` (or `~/.zshrc`), and restart pi.
@@ -39,11 +43,14 @@ mkdir -p ~/.pi/agent
 cat > ~/.pi/agent/pi-go-bars.json << 'EOF'
 {
   "workspaceId": "wrk_YOUR_WORKSPACE_ID",
-  "authCookie": "Fe26.2**YOUR_AUTH_COOKIE"
+  "authCookie": "Fe26.2**YOUR_AUTH_COOKIE",
+  "showZen": false
 }
 EOF
 chmod 600 ~/.pi/agent/pi-go-bars.json
 ```
+
+Set `"showZen": true` (or `export OPENCODE_GO_SHOW_ZEN=1`) to enable the Zen billing segment.
 
 Restart pi.
 
@@ -99,11 +106,29 @@ At **0%** no bar segment is drawn and the text appears dim.
 | `M` | Monthly usage (30-day window) |
 | `⟳` | Reset countdown |
 
+### Zen Pay-As-You-Go Billing (optional)
+
+**Off by default.** Enable with `OPENCODE_GO_SHOW_ZEN=1` or `"showZen": true` in the config. It uses the **same** workspace ID and auth cookie — no new credentials — by scraping the workspace `/billing` page in parallel with the `/go` page.
+
+When enabled, a compact Zen segment appears beside the Go bars:
+
+```
+Go R ████42%██████ W ██████17%██████ M ████8%██████████   Zen $20.00 $0.00/$50.00
+```
+
+It shows **current balance** (`$20.00`) and **this month's spend / monthly limit** (`$0.00/$50.00`). The spend figure colours by percentage of the monthly limit (dim at 0%, green <70%, yellow 70–90%, red ≥90%), mirroring the Go bars. The segment degrades gracefully as the terminal narrows: full → `Zen $20.00` → `$20.00` → hidden.
+
+The `/gobars` detail view gains a **Zen Pay-As-You-Go** section with balance, this-month %/USD/limit, and (if set) auto-reload and monthly-limit lines.
+
+**Units.** The `/billing` SSR stores `balance` and `monthlyUsage` in 1e-8 USD ("microcents" — e.g. `1999960750` → `$20.00`), while `monthlyLimit`, `reloadAmount`, and `reloadTrigger` are whole USD. `parseBilling` normalises both to USD.
+
+When not opted in, the extension makes **no** `/billing` request and renders nothing extra — the Go-only behaviour is unchanged.
+
 ### Commands
 
 | Command | Description |
 |---|---|
-| `/gobars` | Open detail view with full-width 16-char bars for all three windows |
+| `/gobars` | Open detail view with full-width 16-char bars for all three windows (and the Zen billing section, if enabled) |
 | `/gobars-setup` | Display setup instructions (text only, non-interactive) |
 
 ## How It Works
@@ -119,6 +144,8 @@ At **0%** no bar segment is drawn and the text appears dim.
 **Polling.** Data is fetched every 30 seconds. A 90-second cache TTL means most polls return cached data without a network request. The widget re-renders on every poll tick, `turn_start`, and `model_select`.
 
 **Data source.** The extension scrapes the Opencode Go dashboard (`https://opencode.ai/workspace/{id}/go`) and parses the SolidJS SSR hydration output to extract `rollingUsage`, `weeklyUsage`, and `monthlyUsage` objects containing `usagePercent` and `resetInSec`. This will be replaced by the official API endpoint (`/zen/go/v1/usage`) once it is available (see [opencode#16513](https://github.com/anomalyco/opencode/pull/16513)).
+
+**Zen billing data source.** When opted in, the workspace `/billing` page is scraped in parallel. Its SolidJS hydration object is located by anchoring on `customerID:"cus_..."` and depth-counting to the matching `}` (the object nests `lite:$R[N]={...}`), then `balance`, `monthlyUsage`, `monthlyLimit`, and reload fields are parsed within that substring. This anchoring prevents a future component on `/billing` that exposes its own `balance:` field from being silently matched. The official `GET /zen/v1/balance` endpoint ([opencode#10448](https://github.com/anomalyco/opencode/issues/10448)) would replace this scrape when it ships.
 
 ## Troubleshooting
 
@@ -141,7 +168,7 @@ The live fetch failed but cached data is available. Check your network connectio
 
 ### "parser may be outdated" error
 
-Opencode may have changed their dashboard HTML. Reinstall from source:
+Opencode may have changed their dashboard HTML. This can come from either the `/go` scrape (Go usage windows) or the `/billing` scrape (Zen billing, if enabled). Reinstall from source:
 
 ```bash
 cd /path/to/pi-go-bars
@@ -174,7 +201,21 @@ The following helpers are exported from `core.ts` for stable reuse:
 | `renderBar(theme, value, width?)` | Colored bar string |
 | `renderPercent(theme, value)` | Colored percent string |
 | `formatDuration(seconds)` | Human-readable countdown |
+| `formatUsd(value)` | Format a USD amount as `$20.00` |
+| `parseBilling(html)` | Parse `/billing` SSR HTML into `ZenBillingData` |
+| `parseDashboard(html)` | Parse `/go` SSR HTML into `GoUsageData` |
+| `loadConfig(path?)` | Load config from env → `.env` → JSON → legacy paths |
 | `writeConfig(config, path?)` | Atomic config write with `chmod 600` |
+
+## Tests
+
+Parser and config unit tests use Node's built-in test runner (no extra dependencies):
+
+```bash
+npm test
+```
+
+Covers `parseBilling` (real SSR fixture, a decoy-`balance` false-match guard, login redirect, parser-rot detection, nested-object depth), `parseDashboard` regression guards, `formatUsd`, and the `showZen` opt-in config flag. Fixtures under `extensions/pi-go-bars/testdata/` are sanitised (no real Stripe IDs).
 
 ## License
 
