@@ -197,7 +197,7 @@ export default function (pi: ExtensionAPI) {
   // ─── Footer bar renderer ───────────────────────────────────────────────────
 
   /** Build a compact bar string that fits within maxWidth (returns "" if too narrow). */
-  function renderFooterBars(t: any, data: GoUsageData | null, loading: boolean, maxWidth: number): string {
+  function renderFooterBars(t: any, data: GoUsageData | null, loading: boolean, maxWidth: number, showResetsFlag = true): string {
     if (loading) {
       return visibleWidth(t.fg("dim", "Go loading...")) <= maxWidth
         ? t.fg("dim", "Go loading...") : "";
@@ -230,7 +230,7 @@ export default function (pi: ExtensionAPI) {
     const withLabels = visibleWidth("Go") +
       wins.reduce((s, w) => s + 1 + w.label.length + 1 + 4, 0) + staleW;
 
-    if (withLabelsResets <= maxWidth) { showLabels = true; showResets = true; barSlots = 4; }
+    if (withLabelsResets <= maxWidth && showResetsFlag) { showLabels = true; showResets = true; barSlots = 4; }
     else if (withLabels <= maxWidth) { showLabels = true; barSlots = 4; }
     else { barSlots = 4; }
 
@@ -251,7 +251,7 @@ export default function (pi: ExtensionAPI) {
       if (showLabels) parts.push(t.fg("muted", " " + w.label + " "));
       else parts.push(" ");
       parts.push(renderBarSegment(t, w, barSlots));
-      if (showResets && w.resetSec > 0)
+      if (showResets && showResetsFlag && w.resetSec > 0)
         parts.push(t.fg("dim", " \u27F3 " + formatDuration(w.resetSec)));
     }
     return parts.join("") + staleSuffix;
@@ -369,13 +369,12 @@ export default function (pi: ExtensionAPI) {
             }
           }
 
-          // Bars + Zen billing, centered together between stats and model.
+          // Bars + Zen billing on a dedicated line below stats.
           const statsVisible = visibleWidth(statsLeft);
           const modelVisible = visibleWidth(rightSide);
           const minGap = 2;
-          const gapTotal = width - statsVisible - modelVisible - minGap * 2;
-          let barSpace = gapTotal >= 12 ? gapTotal : 0;
-          const bars = barSpace > 0 ? renderFooterBars(theme, state.data, state.loading, barSpace) : "";
+          let barSpace = 50;
+          const bars = barSpace > 0 ? renderFooterBars(theme, state.data, state.loading, barSpace, false) : "";
           const barsVisible = visibleWidth(stripAnsi(bars));
 
           // Zen segment gets whatever gap remains after the Go bars.
@@ -383,7 +382,7 @@ export default function (pi: ExtensionAPI) {
           // plus 1 char of breathing room; below this it's better to show
           // nothing than a truncated/cramped balance.
           const ZEN_MIN_WIDTH = 6;
-          let zenMax = gapTotal - (barsVisible > 0 ? barsVisible + 2 : 0);
+          let zenMax = width - (barsVisible > 0 ? barsVisible + 2 : 0);
           if (zenMax < ZEN_MIN_WIDTH) zenMax = 0;
           const zen = zenMax > 0 ? renderZenSegment(theme, state.billing, zenMax) : "";
           const zenVisible = visibleWidth(stripAnsi(zen));
@@ -392,26 +391,19 @@ export default function (pi: ExtensionAPI) {
           const center = bars + sep + zen;
           const centerVisible = barsVisible + (sep ? 2 : 0) + zenVisible;
 
-          let statsLine: string;
-          if (centerVisible > 0) {
-            const contentW = statsVisible + minGap + centerVisible + minGap + modelVisible;
-            if (contentW <= width) {
-              const gapLeft = Math.max(minGap, Math.floor((width - statsVisible - centerVisible - modelVisible) / 2));
-              const gapRight = width - statsVisible - centerVisible - modelVisible - gapLeft;
-              statsLine = statsLeft + " ".repeat(gapLeft) + center + " ".repeat(gapRight) + rightSide;
-            } else {
-              const pad = " ".repeat(Math.max(minGap, width - statsVisible - modelVisible));
-              statsLine = statsLeft + pad + rightSide;
-            }
-          } else {
-            const pad = " ".repeat(Math.max(minGap, width - statsVisible - modelVisible));
-            statsLine = statsLeft + pad + rightSide;
-          }
+          // Line 2: stats + model, no bars mixed in
+          const pad = " ".repeat(Math.max(minGap, width - statsVisible - modelVisible));
+          const statsLine = statsLeft + pad + rightSide;
 
           const dimStatsLeft = theme.fg("dim", statsLeft);
           const remainder = statsLine.slice(statsLeft.length);
           const statsLineStyled = dimStatsLeft + theme.fg("dim", remainder);
           const lines = [pwdLine, statsLineStyled];
+
+          // Line 3: Go usage bars on a dedicated line, left-aligned
+          if (centerVisible > 0) {
+            lines.push("  " + center);
+          }
 
           // Extension statuses
           const extensionStatuses = footerData.getExtensionStatuses();
