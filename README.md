@@ -3,7 +3,7 @@
 <p align="center">
   <a href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
   <a href="package.json"><img alt="Node: >=22.6" src="https://img.shields.io/badge/node-%3E%3D22.6-brightgreen"></a>
-  <a href="https://github.com/donrami/pi-go-bars"><img alt="GitHub last commit" src="https://img.shields.io/github/last-commit/donrami/pi-go-bars"></a>
+  <a href="https://github.com/4cya/pi-go-bars"><img alt="GitHub last commit" src="https://img.shields.io/github/last-commit/4cya/pi-go-bars"></a>
   <a href="https://pi.dev"><img alt="pi extension" src="https://img.shields.io/badge/pi-extension-purple"></a>
 </p>
 
@@ -16,7 +16,7 @@ Optionally, it can also show your **Zen pay-as-you-go** balance and monthly spen
 ## Install
 
 ```bash
-git clone https://github.com/donrami/pi-go-bars.git
+git clone https://github.com/4cya/pi-go-bars.git
 cd pi-go-bars
 pi install .
 ```
@@ -176,7 +176,7 @@ git pull
 pi install .
 ```
 
-If the problem persists, [open an issue](https://github.com/donrami/pi-go-bars/issues).
+If the problem persists, [open an issue](https://github.com/4cya/pi-go-bars/issues).
 
 ### Widget line doesn't appear
 
